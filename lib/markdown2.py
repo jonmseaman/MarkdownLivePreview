@@ -1899,7 +1899,7 @@ class Markdown(object):
                     yield tup
                 yield 0, "</code>"
 
-            def wrap(self, source, outfile):
+            def wrap(self, source, outfile=None):
                 """Return the source with a code, pre, and div."""
                 return self._wrap_div(self._wrap_pre(self._wrap_code(source)))
 

@@ -44,6 +44,13 @@ $ grep -R FIXME
 3. All your code should be formated by black.
 4. Send a PR!
 
+### Regression tests
+
+With Pygments installed, run `python -m unittest discover -s tests -v`.
+The tests cover fenced-code highlighting and preview cleanup without a running
+Sublime Text instance. Preview appearance and editor events still need to be
+checked in Sublime Text.
+
 ### Known limitations
 
 #### Numbered lists are rendered as unordered lists

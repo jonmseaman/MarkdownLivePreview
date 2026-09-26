@@ -156,7 +156,8 @@ class MarkdownLivePreviewListener(sublime_plugin.EventListener):
             markdown_view.id() == self.markdown_view.id()
         ), "pre_close view.id() != close view.id()"
 
-        del self.phantom_sets[markdown_view.id()]
+        # A restored view or a plugin reload may have no registered phantom set.
+        self.phantom_sets.pop(markdown_view.id(), None)
 
         self.preview_window.run_command("close_window")
 
