@@ -354,6 +354,41 @@ class ListenerTests(unittest.TestCase):
         self.mlp.poll_scroll()
         self.assertGreater(self.html_of(preview).count("<br />"), wide)
 
+    def test_code_highlighted_with_mdpopups(self):
+        calls = []
+
+        def syntax_highlight(view, src, language=None):
+            calls.append((src, language))
+            return (
+                '<div class="highlight"><pre><span style="color: #6699cc;">echo'
+                '</span><br><span>hi</span><br></pre></div>\n'
+            )
+
+        self.mlp.mdpopups = types.SimpleNamespace(syntax_highlight=syntax_highlight)
+        try:
+            self.mlp.highlight_cache.clear()
+            md = self.window.open(
+                file_name="/tmp/a.md", content="```bash\necho\nhi\n```\n", syntax=MD
+            )
+            self.open_preview(md)
+            (preview,) = self.mlp.find_previews(md)
+            html = self.html_of(preview)
+            self.mlp.update_preview(md)  # second render comes from the cache
+        finally:
+            self.mlp.mdpopups = None
+        self.assertEqual(calls, [("echo\nhi", "bash")])
+        self.assertIn('<span style="color: #6699cc;">echo</span>', html)
+        self.assertEqual(html.count("<br />"), 1)  # no trailing blank line
+
+    def test_code_falls_back_to_pygments(self):
+        self.mlp.highlight_cache.clear()
+        md = self.window.open(
+            file_name="/tmp/a.md", content="```python\ndef f(): pass\n```\n", syntax=MD
+        )
+        self.open_preview(md)
+        (preview,) = self.mlp.find_previews(md)
+        self.assertIn('style="color:', self.html_of(preview))
+
     def test_polling_stops_when_preview_closes(self):
         md, preview = self.scroll_setup()
         self.assertTrue(self.mlp.polling)

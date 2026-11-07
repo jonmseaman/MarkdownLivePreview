@@ -5,6 +5,7 @@ preview_view: a scratch view, in another group of the same window, that renders
               markdown_view's content as a phantom
 """
 import os.path
+import re
 from collections import OrderedDict
 from functools import partial
 
@@ -184,7 +185,8 @@ def make_highlighter(view):
             result = mdpopups.syntax_highlight(view, source, language=language)
             # on failure, mdpopups returns the source unchanged
             if result and result.startswith('<div class="highlight">'):
-                html = result
+                # mdpopups ends every line with <br>, including the last one
+                html = re.sub(r"<br>((?:</span>)*</pre></div>)\s*$", r"\1", result)
         if html is None:
             html = pygments_highlight(source, language, dark)
         highlight_cache[key] = html
