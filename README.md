@@ -9,7 +9,7 @@ It's available on package control!
 
 ## Setting a keybinding
 
-The open the preview, you can search up in the command palette
+To open the preview, you can search up in the command palette
 (<kbd>ctrl+shift+p</kbd>) `MarkdownLivePreview: Open Preview`. But if you
 prefer to have a shortcut, add this to your keybindings file:
 
