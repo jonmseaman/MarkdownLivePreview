@@ -233,8 +233,22 @@ def render_grid(rows, max_chars):
     return "<br />".join(lines)
 
 
+def glyphs(text, cls=None):
+    """Put each character of `text` in its own <span>.
+
+    minihtml positions each run of text separately and rounds its position to
+    a whole pixel. If a line is split into runs at different places than the
+    line above (a link here, bold text there), the rounding differs and the
+    borders wobble from line to line. With one run per character, every line
+    is split at exactly the same columns, so every line rounds the same way."""
+    open_tag = '<span class="{}">'.format(cls) if cls else "<span>"
+    return "".join(
+        open_tag + html.escape(char, quote=False) + "</span>" for char in text
+    )
+
+
 def border(text):
-    return '<span class="{}-border">{}</span>'.format(TABLE_CLASS, text)
+    return glyphs(text, TABLE_CLASS + "-border")
 
 
 def render_cell_line(chars, width, align, bold):
@@ -249,7 +263,7 @@ def render_cell_line(chars, width, align, bold):
     content = render_styled(chars)
     if bold and content:
         content = "<strong>{}</strong>".format(content)
-    return NBSP * left + content + NBSP * right
+    return glyphs(NBSP * left) + content + glyphs(NBSP * right)
 
 
 def render_styled(chars):
@@ -269,7 +283,7 @@ def render_styled(chars):
 
 
 def wrap_style(text, style):
-    result = html.escape(text.replace(" ", NBSP), quote=False)
+    result = glyphs(text.replace(" ", NBSP))
     for name, attrs in reversed(style):
         if name == "code":
             # <code> has horizontal padding, which would break the alignment

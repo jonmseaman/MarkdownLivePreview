@@ -34,6 +34,11 @@ def grid_lines(rendered):
     return html.unescape(text).replace("\xa0", " ").split("\n")
 
 
+def merge_glyphs(rendered):
+    """Undo the one-<span>-per-character rendering, for readable assertions."""
+    return re.sub(r"<span>(&[a-z]+;|[^<&])</span>", r"\1", rendered)
+
+
 TABLE = """\
 | # | PR | Step | + / − |
 |--:|:--:|---|---:|
@@ -86,14 +91,25 @@ class TableTests(unittest.TestCase):
         self.assertTrue(cells[3].endswith("+10 / −1 "))  # right-aligned
 
     def test_inline_formatting_is_kept(self):
-        rendered = render(TABLE)
+        rendered = merge_glyphs(render(TABLE))
         self.assertIn('<a href="http://x/5">#5</a>', rendered)
         self.assertIn("<strong>random</strong>", rendered)
         self.assertIn('<span class="mlp-table-code">OO_SEED</span>', rendered)
         self.assertNotIn("<code>OO_SEED</code>", rendered)
 
     def test_header_is_bold(self):
-        self.assertIn("<strong>Step</strong>", render(TABLE))
+        self.assertIn("<strong>Step</strong>", merge_glyphs(render(TABLE)))
+
+    def test_every_character_is_its_own_run(self):
+        # minihtml rounds each text run's position separately: lines split into
+        # runs at different columns made the borders wobble
+        rendered = render(TABLE, chars=60)
+        grid = rendered[rendered.index('<div class="mlp-table">') :]
+        grid = grid[: grid.index("</div>")]
+        runs = re.findall(r">([^<]+)<", grid)
+        self.assertTrue(runs)
+        for run in runs:
+            self.assertEqual(len(html.unescape(run)), 1, run)
 
     def test_words_longer_than_column_are_broken(self):
         markdown = "| a | b |\n|---|---|\n| x | {} |\n".format("y" * 80)
@@ -103,8 +119,8 @@ class TableTests(unittest.TestCase):
 
     def test_html_in_cells_is_escaped(self):
         markdown = "| a |\n|---|\n| 1 &lt; 2 &amp; 3 |\n"
-        rendered = render(markdown)
-        self.assertIn("1&nbsp;&lt;&nbsp;2&nbsp;&amp;&nbsp;3", rendered.replace("\xa0", "&nbsp;"))
+        rendered = merge_glyphs(render(markdown).replace("\xa0", "&nbsp;"))
+        self.assertIn("1&nbsp;&lt;&nbsp;2&nbsp;&amp;&nbsp;3", rendered)
 
     def test_editor_font_is_used(self):
         rendered = markdown2html(
