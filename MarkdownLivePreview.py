@@ -22,6 +22,7 @@ resources = {}
 # views' viewport positions and mirror them onto their previews.
 synced_views = {}  # {markdown_view.id(): markdown_view}
 last_scroll = {}  # {markdown_view.id(): last synced viewport y}
+last_width = {}  # {markdown_view.id(): previews' viewport widths at last check}
 polling = False
 
 
@@ -79,14 +80,22 @@ def start_scroll_sync(view):
 def stop_scroll_sync(view_id):
     synced_views.pop(view_id, None)
     last_scroll.pop(view_id, None)
+    last_width.pop(view_id, None)
 
 
 def poll_scroll():
     global polling
     for view_id, view in list(synced_views.items()):
-        if view.buffer_id() == 0 or not any(find_previews(view)):
+        previews = list(find_previews(view)) if view.buffer_id() else []
+        if not previews:
             stop_scroll_sync(view_id)
-        elif SYNC_SCROLL:
+            continue
+        # tables and images are sized to the preview: re-render when it resizes
+        widths = tuple(preview.viewport_extent()[0] for preview in previews)
+        if last_width.setdefault(view_id, widths) != widths:
+            last_width[view_id] = widths
+            update_preview(view)
+        if SYNC_SCROLL:
             sync_scroll(view)
     if synced_views:
         sublime.set_timeout_async(poll_scroll, SCROLL_POLL_MS)
@@ -157,6 +166,8 @@ def update_preview(view):
             partial(update_preview, view),
             resources,
             preview.viewport_extent()[0],
+            char_width=preview.em_width() or 8.0,
+            font_face=view.settings().get("font_face") or None,
         )
         phantom_set = MarkdownLivePreviewListener.phantom_sets.get(preview.id())
         if phantom_set is None:
@@ -270,6 +281,7 @@ def plugin_unloaded():
     MarkdownLivePreviewListener.phantom_sets.clear()
     synced_views.clear()  # stops the scroll poll loop
     last_scroll.clear()
+    last_width.clear()
     sublime.load_settings("MarkdownLivePreview.sublime-settings").clear_on_change(
         __package__
     )

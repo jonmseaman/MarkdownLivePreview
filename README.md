@@ -15,6 +15,11 @@ A simple plugin to preview your markdown as you type right in Sublime Text.
 - **Preview opens next to your file in the same window**, instead of moving the
   file into a new window (upstream PR #109). Running the command again closes the
   preview.
+- **Tables render as tables.** Sublime's preview HTML can't lay out tables, so
+  they're drawn as a grid in your editor font: columns fit the preview's width,
+  long cells wrap inside their column, column alignment (`:--`, `:-:`, `--:`) is
+  respected, and links, bold and `code` keep their formatting. Tables reflow
+  when you resize the preview.
 - **The preview scrolls along with your markdown file.** Scroll the markdown and
   the preview follows to the same relative position. You can still scroll the
   preview on its own; it catches up the next time the markdown scrolls. Turn it

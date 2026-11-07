@@ -71,6 +71,9 @@ class FakeView:
     def viewport_extent(self):
         return (800, 600)
 
+    def em_width(self):
+        return 8.0
+
     def viewport_position(self):
         return self.position
 
@@ -337,6 +340,16 @@ class ListenerTests(unittest.TestCase):
         md.layout_height = 300.0  # fits in the viewport
         self.mlp.poll_scroll()
         self.assertEqual(preview.position, (0.0, 0.0))
+
+    def test_preview_rerenders_when_resized(self):
+        md, preview = self.scroll_setup()
+        md.content = "| a | b |\n|---|---|\n| " + "word " * 40 + "| x |\n"
+        self.mlp.update_preview(md)
+        self.mlp.poll_scroll()  # records the initial width
+        wide = self.html_of(preview).count("<br />")
+        preview.viewport_extent = lambda: (300, 600)
+        self.mlp.poll_scroll()
+        self.assertGreater(self.html_of(preview).count("<br />"), wide)
 
     def test_polling_stops_when_preview_closes(self):
         md, preview = self.scroll_setup()

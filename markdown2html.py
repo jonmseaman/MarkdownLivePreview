@@ -9,13 +9,22 @@ from functools import partial
 import bs4
 
 from .lib.markdown2 import Markdown
+from .tables import TABLE_CLASS, layout_tables
 
 markdowner = Markdown(
-    extras=["code-friendly", "fenced-code-blocks", "cuddled-lists"])
+    extras=["code-friendly", "fenced-code-blocks", "cuddled-lists", "tables"])
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
 
-def markdown2html(markdown, basepath, re_render, resources, viewport_width):
+def markdown2html(
+    markdown,
+    basepath,
+    re_render,
+    resources,
+    viewport_width,
+    char_width=8.0,
+    font_face=None,
+):
     """converts the markdown to html.
 
     Loads the images and puts in base64 for sublime to understand them
@@ -52,6 +61,10 @@ def markdown2html(markdown, basepath, re_render, resources, viewport_width):
     [x.extract()
      for x in soup.find_all(string=lambda text: isinstance(text, bs4.Comment))]
 
+    # minihtml can't lay out tables: draw them as monospace text grids, leaving
+    # a few characters of slack for the phantom's own margins.
+    layout_tables(soup, max(int(viewport_width / char_width) - 3, 20))
+
     # pre aren't handled by ST3 and require manual adjustment
     for pre_element in soup.find_all("pre"):
         code_element = pre_element.find("code")
@@ -86,12 +99,41 @@ def markdown2html(markdown, basepath, re_render, resources, viewport_width):
         )
 
     # add the pygments stylesheet to the end of the existing stylesheet
-    stylesheet = resources["stylesheet"] + "\n\n" + pygments_stylesheet
+    stylesheet = "\n\n".join(
+        (resources["stylesheet"], pygments_stylesheet, table_stylesheet(font_face))
+    )
 
     # FIXME: report that ST doesn't support <br/> but does work with <br />... WTF?
     return "<style>\n{}\n</style>\n\n{}".format(stylesheet, soup).replace(
         "<br/>", "<br />"
     )
+
+
+def table_stylesheet(font_face):
+    # 1rem is the editor's font size, so in the editor's font each character of
+    # the grid is exactly char_width (the view's em_width()) wide.
+    families = []
+    for family in (font_face, "Consolas", "Menlo", "DejaVu Sans Mono"):
+        if family and family not in families:
+            families.append(family)
+    font_family = ", ".join(
+        '"{}"'.format(family.replace('"', "")) for family in families
+    )
+    return """
+.{cls} {{
+    display: block;
+    font-family: {font}, monospace;
+    font-size: 1rem;
+    margin: 10px 0;
+}}
+.{cls}-border {{
+    color: color(var(--foreground) alpha(0.35));
+}}
+.{cls}-code {{
+    background-color: var(--very-light-bg);
+}}
+""".format(cls=TABLE_CLASS, font=font_family)
+
 
 images_cache = {}
 images_loading = []
