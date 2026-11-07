@@ -35,7 +35,13 @@ KEPT_TAGS = {
 
 def layout_tables(soup, max_chars):
     """Replace every <table> in `soup` with a monospace grid at most
-    `max_chars` characters wide (when the columns can fit)."""
+    `max_chars` characters wide (when the columns can fit).
+
+    Grids hold thousands of tags (one per character), which are slow to parse
+    into the soup and to serialize again. So each table is replaced by an empty
+    placeholder; pass the serialized soup to `insert_tables` with the returned
+    grids to fill them in."""
+    grids = []
     for table in soup.find_all("table"):
         rows = []  # [(is_header, [cell, ...])]
         for tr in table.find_all("tr"):
@@ -46,11 +52,27 @@ def layout_tables(soup, max_chars):
         if not rows:
             table.decompose()
             continue
-        grid = render_grid(rows, max_chars)
-        replacement = bs4.BeautifulSoup(
-            '<div class="{}">{}</div>'.format(TABLE_CLASS, grid), "html.parser"
+        grids.append(render_grid(rows, max_chars))
+        table.replace_with(placeholder(len(grids) - 1))
+    return grids
+
+
+def placeholder(index):
+    return bs4.BeautifulSoup(
+        '<div class="{}" id="mlp-table-{}"></div>'.format(TABLE_CLASS, index),
+        "html.parser",
+    )
+
+
+def insert_tables(html_text, grids):
+    """Fill the placeholders left by `layout_tables` in serialized HTML."""
+    for index, grid in enumerate(grids):
+        html_text = html_text.replace(
+            '<div class="{}" id="mlp-table-{}"></div>'.format(TABLE_CLASS, index),
+            '<div class="{}">{}</div>'.format(TABLE_CLASS, grid),
+            1,
         )
-        table.replace_with(replacement)
+    return html_text
 
 
 class Cell:

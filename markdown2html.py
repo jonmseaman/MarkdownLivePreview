@@ -9,7 +9,7 @@ from functools import partial
 import bs4
 
 from .lib.markdown2 import Markdown
-from .tables import TABLE_CLASS, layout_tables
+from .tables import TABLE_CLASS, insert_tables, layout_tables
 
 class _Markdown(Markdown):
     def _get_pygments_lexer(self, lexer_name):
@@ -87,7 +87,7 @@ def markdown2html(
 
     # minihtml can't lay out tables: draw them as monospace text grids, leaving
     # a few characters of slack for the phantom's own margins.
-    layout_tables(soup, max(int(viewport_width / char_width) - 3, 20))
+    grids = layout_tables(soup, max(int(viewport_width / char_width) - 3, 20))
 
     for pre_element in soup.find_all("pre"):
         code_element = pre_element.find("code")
@@ -109,9 +109,8 @@ def markdown2html(
     )
 
     # FIXME: report that ST doesn't support <br/> but does work with <br />... WTF?
-    return "<style>\n{}\n</style>\n\n{}".format(stylesheet, soup).replace(
-        "<br/>", "<br />"
-    )
+    body = insert_tables(str(soup).replace("<br/>", "<br />"), grids)
+    return "<style>\n{}\n</style>\n\n{}".format(stylesheet, body)
 
 
 def preserve_whitespace(code_element):
