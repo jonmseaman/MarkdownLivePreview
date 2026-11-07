@@ -15,6 +15,10 @@ A simple plugin to preview your markdown as you type right in Sublime Text.
 - **Preview opens next to your file in the same window**, instead of moving the
   file into a new window (upstream PR #109). Running the command again closes the
   preview.
+- **The preview scrolls along with your markdown file.** Scroll the markdown and
+  the preview follows to the same relative position. You can still scroll the
+  preview on its own; it catches up the next time the markdown scrolls. Turn it
+  off with `"sync_scroll": false` in the settings.
 - **Code blocks render correctly, with syntax highlighting** (upstream PRs #126
   and #128).
 - **Unsaved buffers can be previewed.**

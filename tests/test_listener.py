@@ -32,6 +32,8 @@ class FakeView:
         self.closed = False
         self.read_only = False
         self.name_ = ""
+        self.position = (0.0, 0.0)
+        self.layout_height = 2000.0
 
     def id(self):
         return self._id
@@ -68,6 +70,15 @@ class FakeView:
 
     def viewport_extent(self):
         return (800, 600)
+
+    def viewport_position(self):
+        return self.position
+
+    def set_viewport_position(self, xy, animate=True):
+        self.position = xy
+
+    def layout_extent(self):
+        return (800, self.layout_height)
 
     def close(self):
         self.closed = True
@@ -130,7 +141,15 @@ def make_sublime(window, timers):
     sublime.set_timeout_async = lambda fn, delay=0: timers.append(fn)
     sublime.windows = lambda: [window]
     sublime.packages_path = lambda: str(ROOT / "__no_such_dir__" / "Packages")
-    sublime.load_settings = lambda name: {"delay_between_updates": 100}
+    class Settings(dict):
+        def add_on_change(self, key, fn):
+            pass
+
+        def clear_on_change(self, key):
+            pass
+
+    settings = Settings(delay_between_updates=100)
+    sublime.load_settings = lambda name: settings
     sublime.run_command = lambda *a, **k: None
 
     def load_resource(path):
@@ -163,6 +182,8 @@ class ListenerTests(unittest.TestCase):
         self.mlp = importlib.import_module(name + ".MarkdownLivePreview")
         self.mlp.MarkdownLivePreviewListener.phantom_sets.clear()
         self.mlp.MarkdownLivePreviewListener.pending.clear()
+        self.mlp.synced_views.clear()
+        self.mlp.last_scroll.clear()
         self.mlp.plugin_loaded()
         self.listener = self.mlp.MarkdownLivePreviewListener()
 
@@ -208,11 +229,12 @@ class ListenerTests(unittest.TestCase):
         md = self.window.open(file_name="/tmp/a.md", content="one", syntax=MD)
         self.open_preview(md)
         (preview,) = self.mlp.find_previews(md)
+        self.timers.clear()  # drop the scroll-sync poll timer
         for text in ("t", "tw", "two"):
             md.content = text
             self.listener.on_modified_async(md)
         self.assertEqual(len(self.timers), 3)
-        for timer in self.timers:
+        for timer in list(self.timers):
             timer()
         self.assertIn("<p>two</p>", self.html_of(preview))
         self.assertEqual(self.mlp.MarkdownLivePreviewListener.pending, {})
@@ -220,6 +242,7 @@ class ListenerTests(unittest.TestCase):
     def test_debounce_skips_stale_updates(self):
         md = self.window.open(file_name="/tmp/a.md", content="one", syntax=MD)
         self.open_preview(md)
+        self.timers.clear()  # drop the scroll-sync poll timer
         calls = []
         original = self.mlp.update_preview
         self.mlp.update_preview = lambda view: calls.append(view.content)
@@ -228,7 +251,7 @@ class ListenerTests(unittest.TestCase):
             self.listener.on_modified_async(md)
             md.content = "ab"
             self.listener.on_modified_async(md)
-            for timer in self.timers:
+            for timer in list(self.timers):
                 timer()
         finally:
             self.mlp.update_preview = original
@@ -265,6 +288,63 @@ class ListenerTests(unittest.TestCase):
         self.assertTrue(orphan.closed)
         (preview,) = self.mlp.find_previews(md)
         self.assertIn("<p>live</p>", self.html_of(preview))
+
+
+    def scroll_setup(self):
+        md = self.window.open(file_name="/tmp/a.md", content="x", syntax=MD)
+        self.open_preview(md)
+        (preview,) = self.mlp.find_previews(md)
+        self.timers.clear()
+        md.layout_height = 1600.0  # scrollable range 1000
+        preview.layout_height = 3600.0  # scrollable range 3000
+        return md, preview
+
+    def test_scroll_sync_mirrors_relative_position(self):
+        md, preview = self.scroll_setup()
+        md.position = (0.0, 250.0)
+        self.mlp.poll_scroll()
+        self.assertEqual(preview.position, (0.0, 750.0))
+        md.position = (0.0, 5000.0)  # scroll_past_end: clamp to the bottom
+        self.mlp.poll_scroll()
+        self.assertEqual(preview.position, (0.0, 3000.0))
+
+    def test_scroll_sync_leaves_manual_preview_scrolling_alone(self):
+        md, preview = self.scroll_setup()
+        md.position = (0.0, 500.0)
+        self.mlp.poll_scroll()
+        preview.position = (0.0, 42.0)  # user scrolls the preview itself
+        self.mlp.poll_scroll()  # markdown view hasn't moved
+        self.assertEqual(preview.position, (0.0, 42.0))
+
+    def test_scroll_resyncs_after_render(self):
+        md, preview = self.scroll_setup()
+        md.position = (0.0, 500.0)
+        self.mlp.poll_scroll()
+        preview.layout_height = 6600.0  # content grew
+        self.mlp.update_preview(md)
+        self.mlp.poll_scroll()
+        self.assertEqual(preview.position, (0.0, 3000.0))
+
+    def test_scroll_sync_can_be_disabled(self):
+        md, preview = self.scroll_setup()
+        self.mlp.SYNC_SCROLL = False
+        md.position = (0.0, 500.0)
+        self.mlp.poll_scroll()
+        self.assertEqual(preview.position, (0.0, 0.0))
+
+    def test_short_file_keeps_preview_at_top(self):
+        md, preview = self.scroll_setup()
+        md.layout_height = 300.0  # fits in the viewport
+        self.mlp.poll_scroll()
+        self.assertEqual(preview.position, (0.0, 0.0))
+
+    def test_polling_stops_when_preview_closes(self):
+        md, preview = self.scroll_setup()
+        self.assertTrue(self.mlp.polling)
+        self.open_preview(md)  # toggle off
+        self.mlp.poll_scroll()
+        self.assertFalse(self.mlp.polling)
+        self.assertEqual(self.timers, [])
 
 
 if __name__ == "__main__":

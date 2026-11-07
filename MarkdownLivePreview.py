@@ -14,7 +14,15 @@ from .markdown2html import markdown2html
 
 PREVIEW_VIEW_INFO = "preview_view_info"
 DELAY = 100  # overwritten by the setting in plugin_loaded
+SYNC_SCROLL = True  # overwritten by the setting in plugin_loaded
+SCROLL_POLL_MS = 50
 resources = {}
+
+# Sublime has no scroll event, so while previews are open we poll the markdown
+# views' viewport positions and mirror them onto their previews.
+synced_views = {}  # {markdown_view.id(): markdown_view}
+last_scroll = {}  # {markdown_view.id(): last synced viewport y}
+polling = False
 
 
 def is_markdown(view):
@@ -38,6 +46,54 @@ def find_previews(view):
             yield other
 
 
+def scroll_fraction(view):
+    """How far down `view` is scrolled, from 0.0 (top) to 1.0 (bottom)."""
+    scrollable = view.layout_extent()[1] - view.viewport_extent()[1]
+    if scrollable <= 0:
+        return 0.0
+    return min(max(view.viewport_position()[1] / scrollable, 0.0), 1.0)
+
+
+def sync_scroll(view, force=False):
+    """Scroll `view`'s previews to the same relative position as `view`."""
+    y = view.viewport_position()[1]
+    if not force and last_scroll.get(view.id()) == y:
+        return
+    last_scroll[view.id()] = y
+    fraction = scroll_fraction(view)
+    for preview in find_previews(view):
+        scrollable = preview.layout_extent()[1] - preview.viewport_extent()[1]
+        x = preview.viewport_position()[0]
+        preview.set_viewport_position((x, max(scrollable, 0) * fraction), False)
+
+
+def start_scroll_sync(view):
+    global polling
+    synced_views[view.id()] = view
+    last_scroll.pop(view.id(), None)
+    if not polling:
+        polling = True
+        sublime.set_timeout_async(poll_scroll, SCROLL_POLL_MS)
+
+
+def stop_scroll_sync(view_id):
+    synced_views.pop(view_id, None)
+    last_scroll.pop(view_id, None)
+
+
+def poll_scroll():
+    global polling
+    for view_id, view in list(synced_views.items()):
+        if view.buffer_id() == 0 or not any(find_previews(view)):
+            stop_scroll_sync(view_id)
+        elif SYNC_SCROLL:
+            sync_scroll(view)
+    if synced_views:
+        sublime.set_timeout_async(poll_scroll, SCROLL_POLL_MS)
+    else:
+        polling = False
+
+
 def get_resource(resource):
     path = "Packages/{}/resources/{}".format(__package__, resource)
     abs_path = os.path.join(sublime.packages_path(), "..", path)
@@ -57,6 +113,7 @@ class MarkdownLivePreviewListener(sublime_plugin.EventListener):
             self.phantom_sets.pop(view.id(), None)
         elif is_markdown(view):
             self.pending.pop(view.id(), None)
+            stop_scroll_sync(view.id())
             for preview in list(find_previews(view)):
                 self.phantom_sets.pop(preview.id(), None)
                 preview.close()
@@ -115,6 +172,8 @@ def update_preview(view):
                 )
             ]
         )
+    # the preview's height changed: re-sync on the next poll
+    last_scroll.pop(view.id(), None)
 
 
 class OpenMarkdownPreviewCommand(sublime_plugin.TextCommand):
@@ -129,6 +188,7 @@ class OpenMarkdownPreviewCommand(sublime_plugin.TextCommand):
             for preview in existing:
                 MarkdownLivePreviewListener.phantom_sets.pop(preview.id(), None)
                 preview.close()
+            stop_scroll_sync(markdown_view.id())
             window.focus_view(markdown_view)
             return
 
@@ -161,6 +221,7 @@ class OpenMarkdownPreviewCommand(sublime_plugin.TextCommand):
 
         window.focus_view(markdown_view)
         update_preview(markdown_view)
+        start_scroll_sync(markdown_view)
 
     def is_enabled(self):
         return is_markdown(self.view) and not is_preview(self.view)
@@ -171,11 +232,18 @@ def parse_image_resource(text):
     return base64_image, (int(width), int(height))
 
 
+def load_settings():
+    global DELAY, SYNC_SCROLL
+    settings = sublime.load_settings("MarkdownLivePreview.sublime-settings")
+    DELAY = settings.get("delay_between_updates", 100)
+    SYNC_SCROLL = settings.get("sync_scroll", True)
+
+
 def plugin_loaded():
-    global DELAY
-    DELAY = sublime.load_settings("MarkdownLivePreview.sublime-settings").get(
-        "delay_between_updates", 100
-    )
+    settings = sublime.load_settings("MarkdownLivePreview.sublime-settings")
+    settings.clear_on_change(__package__)
+    settings.add_on_change(__package__, load_settings)
+    load_settings()
     resources["base64_404_image"] = parse_image_resource(get_resource("404.base64"))
     resources["base64_loading_image"] = parse_image_resource(
         get_resource("loading.base64")
@@ -193,9 +261,15 @@ def plugin_loaded():
             target = markdown_views.get(view.settings().get(PREVIEW_VIEW_INFO)["id"])
             if target is not None and is_markdown(target):
                 update_preview(target)
+                start_scroll_sync(target)
             else:
                 view.close()
 
 
 def plugin_unloaded():
     MarkdownLivePreviewListener.phantom_sets.clear()
+    synced_views.clear()  # stops the scroll poll loop
+    last_scroll.clear()
+    sublime.load_settings("MarkdownLivePreview.sublime-settings").clear_on_change(
+        __package__
+    )
