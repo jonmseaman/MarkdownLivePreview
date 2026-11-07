@@ -24,8 +24,13 @@ A simple plugin to preview your markdown as you type right in Sublime Text.
   the preview follows to the same relative position. You can still scroll the
   preview on its own; it catches up the next time the markdown scrolls. Turn it
   off with `"sync_scroll": false` in the settings.
-- **Code blocks render correctly, with syntax highlighting** (upstream PRs #126
-  and #128).
+- **Code blocks are highlighted like your editor.** Fenced code blocks with a
+  language (```` ```bash ````, ```` ```python ````, ...) are highlighted with
+  Sublime's own syntax definitions and your color scheme, through
+  [mdpopups](https://github.com/facelessuser/sublime-markdown-popups). Without
+  mdpopups, Pygments is used with a dark or light style to match your
+  background. Spacing and line breaks are preserved (builds on upstream PRs
+  #126 and #128).
 - **Unsaved buffers can be previewed.**
 - **The last keystroke is always rendered.** Upstream's throttle could skip the
   final update when typing quickly.

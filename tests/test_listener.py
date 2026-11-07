@@ -72,7 +72,10 @@ class FakeView:
         return (800, 600)
 
     def em_width(self):
-        return 8.0
+        return 8.25
+
+    def style(self):
+        return {"background": "#303841", "foreground": "#d8dee9"}
 
     def viewport_position(self):
         return self.position

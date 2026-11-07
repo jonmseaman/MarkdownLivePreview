@@ -11,9 +11,27 @@ import bs4
 from .lib.markdown2 import Markdown
 from .tables import TABLE_CLASS, layout_tables
 
-markdowner = Markdown(
-    extras=["code-friendly", "fenced-code-blocks", "cuddled-lists", "tables"])
+class _Markdown(Markdown):
+    def _get_pygments_lexer(self, lexer_name):
+        # Code blocks are highlighted after conversion (see `highlighter` in
+        # markdown2html): keep them as plain <pre><code class="LANG">.
+        return None
+
+
+markdowner = _Markdown(
+    extras=[
+        "code-friendly",
+        "fenced-code-blocks",
+        "cuddled-lists",
+        "tables",
+        "highlightjs-lang",  # puts the fence's language in <code class="...">
+    ]
+)
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+# Height of the box-drawing characters in Consolas (and close to it in most
+# monospace fonts): with this line height, table borders join up vertically.
+TABLE_LINE_HEIGHT = "1.17em"
 
 
 def markdown2html(
@@ -24,6 +42,8 @@ def markdown2html(
     viewport_width,
     char_width=8.0,
     font_face=None,
+    font_scale=1.0,
+    highlighter=None,
 ):
     """converts the markdown to html.
 
@@ -31,6 +51,10 @@ def markdown2html(
     correctly. That means that we are responsible for loading the images from
     the internet. Hence, we take in re_render, which is just a function we call
     when an image has finished loading to retrigger a render (see #90)
+
+    char_width is the width, in px, of a character of the table font, which is
+    font_face at font_scale rem. highlighter(source, language) returns the HTML
+    for a highlighted code block, or None to show the code as plain text.
     """
     html = markdowner.convert(markdown)
 
@@ -65,42 +89,23 @@ def markdown2html(
     # a few characters of slack for the phantom's own margins.
     layout_tables(soup, max(int(viewport_width / char_width) - 3, 20))
 
-    # pre aren't handled by ST3 and require manual adjustment
     for pre_element in soup.find_all("pre"):
         code_element = pre_element.find("code")
-        if code_element is None: continue
+        if code_element is None:
+            continue
+        language = (code_element.get("class") or [None])[0]
+        source = code_element.get_text()
+        if source.endswith("\n"):
+            source = source[:-1]
+        highlighted = highlighter(source, language) if highlighter else None
+        if highlighted:
+            pre_element.replace_with(bs4.BeautifulSoup(highlighted, "html.parser"))
+        else:
+            code_element.string = source  # without the trailing newline
+            preserve_whitespace(code_element)
 
-        # Keep syntax-highlighting tags intact: only rewrite text nodes.
-        for text_node in list(code_element.find_all(string=True)):
-            lines = str(text_node).split("\n")
-
-            # minihtml ignores normal spaces/newlines in <pre>, so preserve them.
-            for index, line in enumerate(lines):
-                if index: text_node.insert_before(soup.new_tag("br"))
-
-                if line: text_node.insert_before(
-                        bs4.NavigableString(line.replace(" ", "\xa0"))
-                    )
-
-            text_node.extract()
-
-    # FIXME: highlight the code using Sublime's syntax if needed
-    # currently using pygments codehilite stylesheet (not that good looking)
-
-    # Reuse markdown2.py Pygments HTML classes by injecting matching CSS
-    try:
-        from pygments.formatters import HtmlFormatter
-    except ImportError:
-        # Fallback: keep preview working without token colors.
-        pygments_stylesheet = ""
-    else:
-        pygments_stylesheet = HtmlFormatter(cssclass="codehilite").get_style_defs(
-            ".codehilite"
-        )
-
-    # add the pygments stylesheet to the end of the existing stylesheet
     stylesheet = "\n\n".join(
-        (resources["stylesheet"], pygments_stylesheet, table_stylesheet(font_face))
+        (resources["stylesheet"], table_stylesheet(font_face, font_scale))
     )
 
     # FIXME: report that ST doesn't support <br/> but does work with <br />... WTF?
@@ -109,9 +114,50 @@ def markdown2html(
     )
 
 
-def table_stylesheet(font_face):
-    # 1rem is the editor's font size, so in the editor's font each character of
-    # the grid is exactly char_width (the view's em_width()) wide.
+def preserve_whitespace(code_element):
+    """minihtml collapses spaces and newlines, even in <pre>: replace them with
+    non-breaking spaces and <br />. Only text nodes are rewritten, so tags from
+    syntax highlighting are kept."""
+    for text_node in list(code_element.find_all(string=True)):
+        for index, line in enumerate(str(text_node).split("\n")):
+            if index:
+                text_node.insert_before(bs4.Tag(name="br", can_be_empty_element=True))
+            if line:
+                text_node.insert_before(bs4.NavigableString(line.replace(" ", "\xa0")))
+        text_node.extract()
+
+
+def pygments_highlight(source, language, dark):
+    """Highlight with Pygments, with the colors inlined (minihtml can't apply
+    Pygments' stylesheet). Returns None if Pygments or the language is missing."""
+    if not language:
+        return None
+    try:
+        from pygments import highlight
+        from pygments.formatters import HtmlFormatter
+        from pygments.lexers import get_lexer_by_name
+        from pygments.util import ClassNotFound
+    except ImportError:
+        return None
+    try:
+        lexer = get_lexer_by_name(language)
+    except ClassNotFound:
+        return None
+    formatter = HtmlFormatter(
+        noclasses=True, nowrap=True, style="monokai" if dark else "default"
+    )
+    body = highlight(source, lexer, formatter)
+    if body.endswith("\n"):
+        body = body[:-1]
+    soup = bs4.BeautifulSoup("<pre><code>{}</code></pre>".format(body), "html.parser")
+    preserve_whitespace(soup.code)
+    return str(soup)
+
+
+def table_stylesheet(font_face, font_scale=1.0):
+    # 1rem is the editor's font size. The plugin picks font_scale so that each
+    # character is a whole number of pixels wide: minihtml rounds the position
+    # of each styled run of text, so fractional widths make the borders drift.
     families = []
     for family in (font_face, "Consolas", "Menlo", "DejaVu Sans Mono"):
         if family and family not in families:
@@ -123,7 +169,8 @@ def table_stylesheet(font_face):
 .{cls} {{
     display: block;
     font-family: {font}, monospace;
-    font-size: 1rem;
+    font-size: {scale:.4f}rem;
+    line-height: {line_height};
     margin: 10px 0;
 }}
 .{cls}-border {{
@@ -132,7 +179,12 @@ def table_stylesheet(font_face):
 .{cls}-code {{
     background-color: var(--very-light-bg);
 }}
-""".format(cls=TABLE_CLASS, font=font_family)
+""".format(
+        cls=TABLE_CLASS,
+        font=font_family,
+        scale=font_scale,
+        line_height=TABLE_LINE_HEIGHT,
+    )
 
 
 images_cache = {}

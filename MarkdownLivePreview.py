@@ -5,12 +5,18 @@ preview_view: a scratch view, in another group of the same window, that renders
               markdown_view's content as a phantom
 """
 import os.path
+from collections import OrderedDict
 from functools import partial
 
 import sublime
 import sublime_plugin
 
-from .markdown2html import markdown2html
+from .markdown2html import markdown2html, pygments_highlight
+
+try:
+    import mdpopups
+except ImportError:  # fall back to Pygments
+    mdpopups = None
 
 PREVIEW_VIEW_INFO = "preview_view_info"
 DELAY = 100  # overwritten by the setting in plugin_loaded
@@ -145,6 +151,50 @@ class MarkdownLivePreviewListener(sublime_plugin.EventListener):
         update_preview(view)
 
 
+HIGHLIGHT_CACHE_SIZE = 500
+highlight_cache = OrderedDict()  # {(color scheme, language, source): html}
+
+
+def is_dark(view):
+    background = (view.style().get("background") or "#ffffff").lstrip("#")
+    try:
+        red, green, blue = (int(background[i : i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return False
+    return 0.299 * red + 0.587 * green + 0.114 * blue < 128
+
+
+def make_highlighter(view):
+    """highlighter(source, language) for markdown2html: Sublime's own syntaxes
+    and the view's color scheme via mdpopups, else Pygments, else None (plain).
+
+    Results are cached, since every keystroke re-renders every code block."""
+    scheme = view.settings().get("color_scheme")
+    dark = is_dark(view)
+
+    def highlight(source, language):
+        if not language:
+            return None
+        key = (scheme, dark, language, source)
+        if key in highlight_cache:
+            highlight_cache.move_to_end(key)
+            return highlight_cache[key]
+        html = None
+        if mdpopups is not None:
+            result = mdpopups.syntax_highlight(view, source, language=language)
+            # on failure, mdpopups returns the source unchanged
+            if result and result.startswith('<div class="highlight">'):
+                html = result
+        if html is None:
+            html = pygments_highlight(source, language, dark)
+        highlight_cache[key] = html
+        while len(highlight_cache) > HIGHLIGHT_CACHE_SIZE:
+            highlight_cache.popitem(last=False)
+        return html
+
+    return highlight
+
+
 def update_preview(view):
     # buffer_id() is 0 once markdown_view is closed. This is needed because this
     # function is also the callback for images loaded from the internet, which
@@ -159,15 +209,21 @@ def update_preview(view):
     basepath = os.path.dirname(file_name) if file_name else os.path.expanduser("~")
     markdown = view.substr(sublime.Region(0, view.size()))
 
+    highlighter = make_highlighter(view)
     for preview in previews:
+        # Size table text so each character is a whole number of pixels wide.
+        em_width = preview.em_width() or 8.0
+        char_width = max(round(em_width), 1)
         html = markdown2html(
             markdown,
             basepath,
             partial(update_preview, view),
             resources,
             preview.viewport_extent()[0],
-            char_width=preview.em_width() or 8.0,
+            char_width=char_width,
             font_face=view.settings().get("font_face") or None,
+            font_scale=char_width / em_width,
+            highlighter=highlighter,
         )
         phantom_set = MarkdownLivePreviewListener.phantom_sets.get(preview.id())
         if phantom_set is None:

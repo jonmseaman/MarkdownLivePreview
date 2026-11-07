@@ -4,7 +4,8 @@
             "beautifulsoup4",
             "soupsieve",
             "typing-extensions",
-            "pygments"
+            "pygments",
+            "mdpopups"
         ]
     }
 }
