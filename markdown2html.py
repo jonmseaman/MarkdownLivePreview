@@ -50,25 +50,48 @@ def markdown2html(markdown, basepath, re_render, resources, viewport_width):
 
     # remove comments, because they pollute the console with error messages
     [x.extract()
-     for x in soup.find_all(text=lambda text: isinstance(text, bs4.Comment))]
+     for x in soup.find_all(string=lambda text: isinstance(text, bs4.Comment))]
 
     # pre aren't handled by ST3 and require manual adjustment
     for pre_element in soup.find_all("pre"):
-        # select the first child, <code>
-        code_element = next(pre_element.children)
-        fixed_pre = (
-            str(code_element)
-            .replace(" ", '<i class="space">.</i>')
-            .replace("\n", "<br />")
+        code_element = pre_element.find("code")
+        if code_element is None: continue
+
+        # Keep syntax-highlighting tags intact: only rewrite text nodes.
+        for text_node in list(code_element.find_all(string=True)):
+            lines = str(text_node).split("\n")
+
+            # minihtml ignores normal spaces/newlines in <pre>, so preserve them.
+            for index, line in enumerate(lines):
+                if index: text_node.insert_before(soup.new_tag("br"))
+
+                if line: text_node.insert_before(
+                        bs4.NavigableString(line.replace(" ", "\xa0"))
+                    )
+
+            text_node.extract()
+
+    # FIXME: highlight the code using Sublime's syntax if needed
+    # currently using pygments codehilite stylesheet (not that good looking)
+
+    # Reuse markdown2.py Pygments HTML classes by injecting matching CSS
+    try:
+        from pygments.formatters import HtmlFormatter
+    except ImportError:
+        # Fallback: keep preview working without token colors.
+        pygments_stylesheet = ""
+    else:
+        pygments_stylesheet = HtmlFormatter(cssclass="codehilite").get_style_defs(
+            ".codehilite"
         )
-        code_element.replace_with(bs4.BeautifulSoup(fixed_pre, "html.parser"))
 
-    # FIXME:
-    # - report that ST doesn't support <br/> but does work with <br />... WTF?
-    return ("<style>\n{}\n</style>\n\n{}"
-            .format(resources["stylesheet"], soup)
-            .replace("<br/>", "<br />"))
+    # add the pygments stylesheet to the end of the existing stylesheet
+    stylesheet = resources["stylesheet"] + "\n\n" + pygments_stylesheet
 
+    # FIXME: report that ST doesn't support <br/> but does work with <br />... WTF?
+    return "<style>\n{}\n</style>\n\n{}".format(stylesheet, soup).replace(
+        "<br/>", "<br />"
+    )
 
 images_cache = {}
 images_loading = []
