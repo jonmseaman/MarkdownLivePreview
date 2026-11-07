@@ -1,13 +1,10 @@
 """
 Terminology
-original_view: the view in the regular editor, without it's own window
-markdown_view: the markdown view, in the special window
-preview_view: the preview view, in the special window
-original_window: the regular window
-preview_window: the window with the markdown file and the preview
+markdown_view: the view holding the markdown being edited
+preview_view: a scratch view, in another group of the same window, that renders
+              markdown_view's content as a phantom
 """
 import os.path
-import time
 from functools import partial
 
 import sublime
@@ -16,20 +13,33 @@ import sublime_plugin
 from .markdown2html import markdown2html
 
 PREVIEW_VIEW_INFO = "preview_view_info"
+DELAY = 100  # overwritten by the setting in plugin_loaded
 resources = {}
 
 
-def find_preview(view):
-    """find previews for input view."""
+def is_markdown(view):
+    syntax = view.settings().get("syntax") or ""
+    return "markdown" in syntax.lower()
+
+
+def is_preview(view):
+    return bool(view.settings().get(PREVIEW_VIEW_INFO))
+
+
+def find_previews(view):
+    """Yield the preview views attached to markdown view `view`."""
+    window = view.window()
+    if window is None:
+        return
     view_id = view.id()
-    for x in view.window().views():
-        d = x.settings().get(PREVIEW_VIEW_INFO)
-        if d and d.get('id') == view_id:
-            yield x
+    for other in window.views():
+        info = other.settings().get(PREVIEW_VIEW_INFO)
+        if info and info.get("id") == view_id:
+            yield other
 
 
 def get_resource(resource):
-    path = "Packages/MarkdownLivePreview/resources/" + resource
+    path = "Packages/{}/resources/{}".format(__package__, resource)
     abs_path = os.path.join(sublime.packages_path(), "..", path)
     if os.path.isfile(abs_path):
         with open(abs_path, "r") as fp:
@@ -38,79 +48,122 @@ def get_resource(resource):
 
 
 class MarkdownLivePreviewListener(sublime_plugin.EventListener):
-    last_update = 0  # update only if now() - last_update > DELAY
-    phantom_sets = {}  # {preview.id(): PhantomSet}
+    phantom_sets = {}  # {preview_view.id(): PhantomSet}
+    pending = {}  # {markdown_view.id(): number of scheduled updates}
 
     def on_pre_close(self, view):
-        """Closing markdown files closes any associated previews."""
-        if "markdown" in view.settings().get("syntax").lower():
-            previews = list(find_preview(view))
-            if previews:
-                window = view.window()
-                for preview in previews:
-                    window.focus_view(preview)
-                    window.run_command('close_file')
-        else:
-            d = view.settings().get(PREVIEW_VIEW_INFO)
-            if d:
-                view_id = view.id()
-                if view_id in self.phantom_sets:
-                    del self.phantom_sets[view_id]
+        """Closing a markdown file closes its previews."""
+        if is_preview(view):
+            self.phantom_sets.pop(view.id(), None)
+        elif is_markdown(view):
+            self.pending.pop(view.id(), None)
+            for preview in list(find_previews(view)):
+                self.phantom_sets.pop(preview.id(), None)
+                preview.close()
 
     def on_modified_async(self, view):
-        """Schedule an update when changing markdown files"""
-        if "markdown" in view.settings().get("syntax").lower():
-            sublime.set_timeout(partial(self.update_preview, view), DELAY)
+        """Debounce: render DELAY ms after the last modification."""
+        if not is_markdown(view) or is_preview(view):
+            return
+        view_id = view.id()
+        self.pending[view_id] = self.pending.get(view_id, 0) + 1
+        sublime.set_timeout_async(partial(self._debounced_update, view), DELAY)
 
-    def update_preview(self, view):
-        # if the buffer id is 0, that means that the markdown_view has been
-        # closed. This check is needed since a this function is used as a
-        # callback for when images are loaded from the internet (ie. it could
-        # finish loading *after* the user closes the markdown_view)
-        if time.time() - self.last_update < DELAY / 1000:
-            return
-        if view.buffer_id() == 0:
-            return
-        previews = list(find_preview(view))
-        if not previews:
-            return
-        self.last_update = time.time()
-        for preview in previews:
-            html = markdown2html(
-                view.substr(sublime.Region(0, view.size())),
-                os.path.dirname(view.file_name()),
-                partial(self.update_preview, view),
-                resources,
-                preview.viewport_extent()[0])
-            self.phantom_sets[preview.id()].update([
+    def _debounced_update(self, view):
+        view_id = view.id()
+        count = self.pending.get(view_id, 0) - 1
+        if count > 0:
+            self.pending[view_id] = count
+            return  # a newer modification has its own update scheduled
+        self.pending.pop(view_id, None)
+        update_preview(view)
+
+
+def update_preview(view):
+    # buffer_id() is 0 once markdown_view is closed. This is needed because this
+    # function is also the callback for images loaded from the internet, which
+    # can finish *after* the user closes the markdown view.
+    if view.buffer_id() == 0:
+        return
+    previews = list(find_previews(view))
+    if not previews:
+        return
+
+    file_name = view.file_name()
+    basepath = os.path.dirname(file_name) if file_name else os.path.expanduser("~")
+    markdown = view.substr(sublime.Region(0, view.size()))
+
+    for preview in previews:
+        html = markdown2html(
+            markdown,
+            basepath,
+            partial(update_preview, view),
+            resources,
+            preview.viewport_extent()[0],
+        )
+        phantom_set = MarkdownLivePreviewListener.phantom_sets.get(preview.id())
+        if phantom_set is None:
+            phantom_set = sublime.PhantomSet(preview)
+            MarkdownLivePreviewListener.phantom_sets[preview.id()] = phantom_set
+        phantom_set.update(
+            [
                 sublime.Phantom(
                     sublime.Region(0),
                     html,
                     sublime.LAYOUT_BLOCK,
-                    lambda x: sublime.run_command("open_url", {"url": x}))])
+                    lambda href: sublime.run_command("open_url", {"url": href}),
+                )
+            ]
+        )
 
 
 class OpenMarkdownPreviewCommand(sublime_plugin.TextCommand):
+    """Open a preview of this file in the other pane, or close it if it's open."""
+
     def run(self, edit):
-        '''Set to multi-pane layout. Open markdown preview in another pane.'''
-        window = sublime.active_window()
+        markdown_view = self.view
+        window = markdown_view.window()
+
+        existing = list(find_previews(markdown_view))
+        if existing:
+            for preview in existing:
+                MarkdownLivePreviewListener.phantom_sets.pop(preview.id(), None)
+                preview.close()
+            window.focus_view(markdown_view)
+            return
+
         if window.num_groups() < 2:
-            window.set_layout({
-                "cols": [0.0, 0.5, 1.0],
-                "rows": [0.0, 1.0],
-                "cells": [[0, 0, 1, 1], [1, 0, 2, 1]]})
-        window.focus_group(0 if window.active_group() else 1)
-        view = window.new_file()
-        view.set_scratch(True)
-        view.set_name("Preview")
-        view.settings().set(PREVIEW_VIEW_INFO, {'id': self.view.id()})
-        ps = MarkdownLivePreviewListener.phantom_sets
-        ps[view.id()] = sublime.PhantomSet(view)
-        MarkdownLivePreviewListener().update_preview(self.view)
-        window.focus_view(self.view)
+            window.set_layout(
+                {
+                    "cols": [0.0, 0.5, 1.0],
+                    "rows": [0.0, 1.0],
+                    "cells": [[0, 0, 1, 1], [1, 0, 2, 1]],
+                }
+            )
+        # open the preview in the group next to the markdown view
+        group = 1 if window.get_view_index(markdown_view)[0] == 0 else 0
+        window.focus_group(group)
+        preview = window.new_file()
+        preview.set_scratch(True)
+        preview.set_name("Preview: " + os.path.basename(
+            markdown_view.file_name() or markdown_view.name() or "untitled"))
+        settings = preview.settings()
+        settings.set(PREVIEW_VIEW_INFO, {"id": markdown_view.id()})
+        for key, value in (
+            ("gutter", False),
+            ("line_numbers", False),
+            ("draw_indent_guides", False),
+            ("highlight_line", False),
+            ("scroll_past_end", False),
+        ):
+            settings.set(key, value)
+        preview.set_read_only(True)
+
+        window.focus_view(markdown_view)
+        update_preview(markdown_view)
 
     def is_enabled(self):
-        return "markdown" in self.view.settings().get("syntax").lower()
+        return is_markdown(self.view) and not is_preview(self.view)
 
 
 def parse_image_resource(text):
@@ -121,9 +174,28 @@ def parse_image_resource(text):
 def plugin_loaded():
     global DELAY
     DELAY = sublime.load_settings("MarkdownLivePreview.sublime-settings").get(
-        "delay_between_updates")
-    resources["base64_404_image"] = parse_image_resource(
-        get_resource("404.base64"))
+        "delay_between_updates", 100
+    )
+    resources["base64_404_image"] = parse_image_resource(get_resource("404.base64"))
     resources["base64_loading_image"] = parse_image_resource(
-        get_resource("loading.base64"))
+        get_resource("loading.base64")
+    )
     resources["stylesheet"] = get_resource("stylesheet.css")
+
+    # After a plugin reload, re-render previews whose markdown view still exists.
+    # Previews restored from a previous session point at view ids that no longer
+    # exist: close them.
+    for window in sublime.windows():
+        markdown_views = {v.id(): v for v in window.views() if not is_preview(v)}
+        for view in window.views():
+            if not is_preview(view):
+                continue
+            target = markdown_views.get(view.settings().get(PREVIEW_VIEW_INFO)["id"])
+            if target is not None and is_markdown(target):
+                update_preview(target)
+            else:
+                view.close()
+
+
+def plugin_unloaded():
+    MarkdownLivePreviewListener.phantom_sets.clear()

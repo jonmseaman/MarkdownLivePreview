@@ -1,16 +1,48 @@
 # MarkdownLivePreview
 
 A simple plugin to preview your markdown as you type right in Sublime Text.
-No dependencies!
+
+> **This is an enhanced fork of
+> [math2001/MarkdownLivePreview](https://github.com/math2001/MarkdownLivePreview)**
+> updated for Sublime Text 4 (build 4213+, Python 3.14 plugin host).
+
+## What's different in this fork
+
+- **Works on current Sublime Text.** Declares all the libraries it needs
+  (`beautifulsoup4`, `soupsieve`, `typing-extensions`, `pygments`) so Package
+  Control installs them for the Python 3.14 plugin host, and opts into that host
+  with `.python-version`.
+- **Preview opens next to your file in the same window**, instead of moving the
+  file into a new window (upstream PR #109). Running the command again closes the
+  preview.
+- **Code blocks render correctly, with syntax highlighting** (upstream PRs #126
+  and #128).
+- **Unsaved buffers can be previewed.**
+- **The last keystroke is always rendered.** Upstream's throttle could skip the
+  final update when typing quickly.
+- The preview tab is read-only, with no gutter or line numbers, and is named
+  after the file it previews.
+- Leftover previews from a previous session are closed on startup.
+- `MarkdownLivePreview: Open Settings` is in the command palette and in
+  Preferences > Package Settings.
 
 ## How to install
 
-It's available on package control!
+Install from this fork with Package Control: run `Package Control: Add
+Repository`, paste `https://github.com/jonmseaman/MarkdownLivePreview`, then run
+`Package Control: Install Package` and pick `MarkdownLivePreview`.
+
+Or clone it straight into your `Packages` folder:
+
+```
+git clone https://github.com/jonmseaman/MarkdownLivePreview "%APPDATA%\Sublime Text\Packages\MarkdownLivePreview"
+```
 
 ## Setting a keybinding
 
 To open the preview, you can search up in the command palette
-(<kbd>ctrl+shift+p</kbd>) `MarkdownLivePreview: Open Preview`. But if you
+(<kbd>ctrl+shift+p</kbd>) `MarkdownLivePreview: Open Preview` (run it again to
+close the preview). But if you
 prefer to have a shortcut, add this to your keybindings file:
 
 ```json
