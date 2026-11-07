@@ -1,68 +1,70 @@
 # MarkdownLivePreview
 
-A simple plugin to preview your markdown as you type right in Sublime Text.
+Preview your markdown as you type, right inside Sublime Text: no browser, no
+external tools. The preview opens next to your file, follows the file you're
+working on, scrolls along with it, and highlights code like your editor does.
 
-> **This is an enhanced fork of
-> [math2001/MarkdownLivePreview](https://github.com/math2001/MarkdownLivePreview)**
-> updated for Sublime Text 4 (build 4213+, Python 3.14 plugin host).
+> This is the maintained continuation of
+> [math2001/MarkdownLivePreview](https://github.com/math2001/MarkdownLivePreview),
+> which has had no releases since 2019 and no longer works on current Sublime
+> Text. Thanks to math2001 for the original plugin.
 
-## What's different in this fork
+Requires Sublime Text 4. (Sublime Text 3 users get the last original release,
+3.0.1, from Package Control.)
 
-- **Works on current Sublime Text.** Declares all the libraries it needs
-  (`beautifulsoup4`, `soupsieve`, `typing-extensions`, `pygments`) so Package
-  Control installs them for the Python 3.14 plugin host, and opts into that host
-  with `.python-version`.
-- **Preview opens next to your file in the same window**, instead of moving the
-  file into a new window (upstream PR #109). Running the command again closes the
-  preview.
-- **Tables render as tables.** Sublime's preview HTML can't lay out tables, so
-  they're drawn as a grid in your editor font: columns fit the preview's width,
-  long cells wrap inside their column, column alignment (`:--`, `:-:`, `--:`) is
-  respected, and links, bold and `code` keep their formatting. Tables reflow
-  when you resize the preview.
-- **The preview follows the file you're looking at.** Switch to another
-  markdown tab and the preview shows that file; close the previewed file and it
-  moves on to the next markdown file (and closes when none are left). Tabs that
-  aren't markdown, and files opened in the preview's own pane, leave it alone.
-  Turn it off with `"follow_active_file": false`.
-- **The preview scrolls along with your markdown file.** Scroll the markdown and
-  the preview follows to the same relative position. You can still scroll the
-  preview on its own; it catches up the next time the markdown scrolls. Turn it
-  off with `"sync_scroll": false` in the settings.
+## Install
+
+Run `Package Control: Install Package` and pick `MarkdownLivePreview`.
+
+## Usage
+
+Open a markdown file and run `MarkdownLivePreview: Open Preview` from the command
+palette (<kbd>ctrl+shift+p</kbd>). Run it again to close the preview.
+
+- **The preview opens next to your file in the same window.**
+- **It follows the file you're looking at.** Switch to another markdown tab and
+  the preview shows that file; close the previewed file and it moves on to the
+  next markdown file (and closes when none are left). Tabs that aren't markdown,
+  and files opened in the preview's own pane, leave it alone.
+- **It scrolls along with your markdown file.** You can still scroll the
+  preview on its own; it catches up the next time the markdown scrolls.
 - **Code blocks are highlighted like your editor.** Fenced code blocks with a
   language (```` ```bash ````, ```` ```python ````, ...) are highlighted with
   Sublime's own syntax definitions and your color scheme, through
   [mdpopups](https://github.com/facelessuser/sublime-markdown-popups). Without
   mdpopups, Pygments is used with a dark or light style to match your
-  background. Spacing and line breaks are preserved (builds on upstream PRs
-  #126 and #128).
-- **Unsaved buffers can be previewed.**
-- **The last keystroke is always rendered.** Upstream's throttle could skip the
-  final update when typing quickly.
-- The preview tab is read-only, with no gutter or line numbers, and is named
-  after the file it previews.
-- Leftover previews from a previous session are closed on startup.
-- `MarkdownLivePreview: Open Settings` is in the command palette and in
-  Preferences > Package Settings.
+  background.
+- **Tables render as tables.** Sublime's preview HTML can't lay out tables, so
+  they're drawn as a grid in your editor font: columns fit the preview's width,
+  long cells wrap inside their column, column alignment (`:--`, `:-:`, `--:`) is
+  respected, and links, bold and `code` keep their formatting. Tables reflow
+  when you resize the preview.
+- **Unsaved files can be previewed.**
+- Images (local and remote) are shown, scaled to fit the preview.
 
-## How to install
+### Settings
 
-Install from this fork with Package Control: run `Package Control: Add
-Repository`, paste `https://github.com/jonmseaman/MarkdownLivePreview`, then run
-`Package Control: Install Package` and pick `MarkdownLivePreview`.
+`MarkdownLivePreview: Open Settings` (command palette, or Preferences > Package
+Settings):
 
-Or clone it straight into your `Packages` folder:
+```js
+{
+    // minimum number of milliseconds to wait before updating the preview again
+    "delay_between_updates": 100,
 
+    // scroll the preview along with the markdown file
+    "sync_scroll": true,
+
+    // when you switch to another markdown file, show it in the preview; when you
+    // close the previewed file, show the next markdown file instead
+    "follow_active_file": true
+}
 ```
-git clone https://github.com/jonmseaman/MarkdownLivePreview "%APPDATA%\Sublime Text\Packages\MarkdownLivePreview"
-```
 
-## Setting a keybinding
+### Key binding
 
-To open the preview, you can search up in the command palette
-(<kbd>ctrl+shift+p</kbd>) `MarkdownLivePreview: Open Preview` (run it again to
-close the preview). But if you
-prefer to have a shortcut, add this to your keybindings file:
+There's no key binding by default. To add one, run `Preferences: Key Bindings`
+and add:
 
 ```json
 {
@@ -71,53 +73,23 @@ prefer to have a shortcut, add this to your keybindings file:
 }
 ```
 
-## How to contribute
+## Known limitations
 
-If you know what feature you want to implement, or what bug you wanna fix, then
-go ahead and hack! Maybe raise an issue before hand so that we can talk about
-it if it's a big feature.
+- **Numbered lists are rendered as bulleted lists.** Sublime Text's minihtml
+  [doesn't support ordered lists](https://github.com/sublimehq/sublime_text/issues/1767).
+- **Text in the preview can't be selected or copied.** Sublime Text doesn't
+  allow selecting text in HTML it renders.
 
-But if you wanna contribute just to say thanks, and don't really know what you
-could be working on, then there are a bunch of `FIXME`s all over this package.
-Just pick one and fix it :-)
+## Contributing
+
+Issues and pull requests are welcome at
+https://github.com/jonmseaman/MarkdownLivePreview.
+
+The tests run outside Sublime Text (against a fake `sublime` module). With
+`beautifulsoup4` and `pygments` installed:
 
 ```
-$ git clone https://github.com/math2001/MarkdownLivePreview
-$ cd MarkdownLivePreview
-$ grep -R FIXME
+python -m unittest discover -s tests -v
 ```
 
-### Hack it!
-
-1. Fork this repo
-2. Make your own branch (the name of the branch should be the feature you are
-   implementing eg. `improve-tables`, `fix-crash-on-multiple-preview`
-3. All your code should be formated by black.
-4. Send a PR!
-
-### Regression tests
-
-With Pygments installed, run `python -m unittest discover -s tests -v`.
-The tests cover fenced-code highlighting without a running Sublime Text
-instance. Preview appearance and editor events still need to be
-checked in Sublime Text.
-
-### Known limitations
-
-#### Numbered lists are rendered as unordered lists
-
-```md
-1. first
-2. second
-3. third
-```
-
-will be previewed the exact same way as
-
-```md
-- first
-- second
-- third
-```
-
-The issue comes from [Sublime Text's minihtml](https://www.sublimetext.com/docs/3/minihtml.html) which [doesn't support ordered lists](https://github.com/sublimehq/sublime_text/issues/1767). If you think feel like implementing a workaround, feel free to contribute, but it's not something I'm planning on doing. It isn't a critical feature, and support should come with time...
+Preview appearance and editor events still need checking in Sublime Text itself.

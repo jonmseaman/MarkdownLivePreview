@@ -1,0 +1,25 @@
+MarkdownLivePreview 4.0.0
+=========================
+
+MarkdownLivePreview has a new maintainer and works on current Sublime Text 4
+again (including builds 4213+, where plugins run on Python 3.14).
+
+Issues and suggestions now go to:
+https://github.com/jonmseaman/MarkdownLivePreview/issues
+
+What's new
+----------
+
+- The preview opens next to your file in the same window, instead of moving
+  the file into a new window. Run "Open Preview" again to close it.
+- The preview follows whichever markdown file you switch to
+  (setting: "follow_active_file").
+- The preview scrolls along with your markdown file (setting: "sync_scroll").
+- Code blocks are highlighted with Sublime's own syntaxes and your color
+  scheme.
+- Tables are rendered as tables.
+- Unsaved files can be previewed, and the preview no longer misses your last
+  keystroke.
+
+If the preview doesn't open after upgrading, restart Sublime Text so the new
+libraries it depends on are loaded.
