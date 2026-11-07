@@ -88,7 +88,12 @@ class FakeView:
 
     def close(self):
         self.closed = True
-        self._window._views.remove(self)
+        window = self._window
+        window._views.remove(self)
+        group = window.group_of[self.id()]
+        if window.active.get(group) is self:
+            remaining = window.views_in_group(group)
+            window.active[group] = remaining[-1] if remaining else None
 
 
 class FakeWindow:
@@ -97,9 +102,19 @@ class FakeWindow:
         self.groups = 1
         self.group_of = {}
         self.active_group = 0
+        self.active = {}  # {group: active view}
 
     def views(self):
         return list(self._views)
+
+    def views_in_group(self, group):
+        return [v for v in self._views if self.group_of[v.id()] == group]
+
+    def active_view_in_group(self, group):
+        return self.active.get(group)
+
+    def active_view(self):
+        return self.active.get(self.active_group)
 
     def num_groups(self):
         return self.groups
@@ -112,21 +127,22 @@ class FakeWindow:
 
     def focus_view(self, view):
         self.active_group = self.group_of.get(view.id(), 0)
+        self.active[self.active_group] = view
 
     def get_view_index(self, view):
         return (self.group_of.get(view.id(), 0), 0)
 
-    def new_file(self):
-        view = FakeView(self)
+    def _add(self, view):
         self._views.append(view)
         self.group_of[view.id()] = self.active_group
+        self.active[self.active_group] = view
         return view
 
+    def new_file(self):
+        return self._add(FakeView(self))
+
     def open(self, **kwargs):
-        view = FakeView(self, **kwargs)
-        self._views.append(view)
-        self.group_of[view.id()] = self.active_group
-        return view
+        return self._add(FakeView(self, **kwargs))
 
 
 class FakePhantomSet:
@@ -145,6 +161,8 @@ def make_sublime(window, timers):
     sublime.PhantomSet = FakePhantomSet
     sublime.LAYOUT_BLOCK = 2
     sublime.set_timeout_async = lambda fn, delay=0: timers.append(fn)
+    sublime.main_timers = []  # set_timeout callbacks, run by the tests
+    sublime.set_timeout = lambda fn, delay=0: sublime.main_timers.append(fn)
     sublime.windows = lambda: [window]
     sublime.packages_path = lambda: str(ROOT / "__no_such_dir__" / "Packages")
     class Settings(dict):
@@ -267,7 +285,7 @@ class ListenerTests(unittest.TestCase):
         md = self.window.open(file_name="/tmp/a.md", content="x", syntax=MD)
         self.open_preview(md)
         (preview,) = self.mlp.find_previews(md)
-        self.listener.on_pre_close(md)
+        self.close(md)
         self.assertTrue(preview.closed)
         self.assertEqual(self.mlp.MarkdownLivePreviewListener.phantom_sets, {})
 
@@ -388,6 +406,85 @@ class ListenerTests(unittest.TestCase):
         self.open_preview(md)
         (preview,) = self.mlp.find_previews(md)
         self.assertIn('style="color:', self.html_of(preview))
+
+    # --- following the active markdown file ---
+
+    def two_files(self):
+        """a.md (previewed) and b.md in pane 0, preview in pane 1."""
+        a = self.window.open(file_name="/tmp/a.md", content="# A", syntax=MD)
+        self.open_preview(a)
+        (preview,) = self.mlp.find_previews(a)
+        self.window.focus_group(0)
+        b = self.window.open(file_name="/tmp/b.md", content="# B", syntax=MD)
+        return a, b, preview
+
+    def close(self, view):
+        """Close `view` the way Sublime does: pre_close, close, then timers."""
+        self.listener.on_pre_close(view)
+        view.close()
+        sublime = sys.modules["sublime"]
+        while sublime.main_timers:
+            sublime.main_timers.pop(0)()
+
+    def test_preview_follows_activated_markdown_file(self):
+        a, b, preview = self.two_files()
+        self.listener.on_activated_async(b)
+        self.assertEqual(list(self.mlp.find_previews(b)), [preview])
+        self.assertEqual(list(self.mlp.find_previews(a)), [])
+        self.assertIn("<h1>B</h1>", self.html_of(preview))
+        self.assertEqual(preview.name(), "Preview: b.md")
+        self.assertIn(b.id(), self.mlp.synced_views)
+        # and back
+        self.listener.on_activated_async(a)
+        self.assertIn("<h1>A</h1>", self.html_of(preview))
+
+    def test_non_markdown_file_leaves_preview_alone(self):
+        a, _, preview = self.two_files()
+        py = self.window.open(file_name="/tmp/x.py", content="x", syntax="Python")
+        self.listener.on_activated_async(py)
+        self.assertEqual(list(self.mlp.find_previews(a)), [preview])
+
+    def test_file_in_preview_pane_does_not_take_over(self):
+        a, _, preview = self.two_files()
+        self.window.focus_group(1)
+        other = self.window.open(file_name="/tmp/c.md", content="# C", syntax=MD)
+        self.listener.on_activated_async(other)
+        self.assertEqual(list(self.mlp.find_previews(a)), [preview])
+
+    def test_following_can_be_disabled(self):
+        a, b, preview = self.two_files()
+        self.mlp.FOLLOW_ACTIVE_FILE = False
+        self.listener.on_activated_async(b)
+        self.assertEqual(list(self.mlp.find_previews(a)), [preview])
+        self.close(a)
+        self.assertTrue(preview.closed)
+
+    def test_closing_previewed_file_moves_preview_to_next_markdown(self):
+        a, b, preview = self.two_files()
+        self.window.focus_view(a)
+        self.close(a)
+        self.assertFalse(preview.closed)
+        self.assertEqual(list(self.mlp.find_previews(b)), [preview])
+        self.assertIn("<h1>B</h1>", self.html_of(preview))
+
+    def test_closing_last_markdown_file_closes_preview(self):
+        a = self.window.open(file_name="/tmp/a.md", content="# A", syntax=MD)
+        self.open_preview(a)
+        (preview,) = self.mlp.find_previews(a)
+        self.close(a)
+        self.assertTrue(preview.closed)
+        self.assertEqual(self.mlp.MarkdownLivePreviewListener.phantom_sets, {})
+
+    def test_file_that_becomes_markdown_on_load_is_followed(self):
+        a, _, preview = self.two_files()
+        self.window.focus_group(0)
+        loading = self.window.open(file_name="/tmp/new.md", content="# New")
+        self.listener.on_activated_async(loading)  # no syntax yet
+        self.assertEqual(list(self.mlp.find_previews(a)), [preview])
+        loading.settings().set("syntax", MD)
+        self.listener.on_load_async(loading)
+        self.assertEqual(list(self.mlp.find_previews(loading)), [preview])
+        self.assertIn("<h1>New</h1>", self.html_of(preview))
 
     def test_polling_stops_when_preview_closes(self):
         md, preview = self.scroll_setup()

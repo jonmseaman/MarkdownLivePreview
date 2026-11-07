@@ -22,6 +22,7 @@ except ImportError:  # fall back to Pygments
 PREVIEW_VIEW_INFO = "preview_view_info"
 DELAY = 100  # overwritten by the setting in plugin_loaded
 SYNC_SCROLL = True  # overwritten by the setting in plugin_loaded
+FOLLOW_ACTIVE_FILE = True  # overwritten by the setting in plugin_loaded
 SCROLL_POLL_MS = 50
 resources = {}
 
@@ -52,6 +53,83 @@ def find_previews(view):
         info = other.settings().get(PREVIEW_VIEW_INFO)
         if info and info.get("id") == view_id:
             yield other
+
+
+def group_of(view):
+    window = view.window()
+    return window.get_view_index(view)[0] if window else -1
+
+
+def preview_target(preview):
+    """The markdown view `preview` shows, or None if it's detached."""
+    target_id = (preview.settings().get(PREVIEW_VIEW_INFO) or {}).get("id")
+    window = preview.window()
+    if target_id is None or window is None:
+        return None
+    for view in window.views():
+        if view.id() == target_id:
+            return view
+    return None
+
+
+def preview_name(view):
+    return "Preview: " + os.path.basename(
+        view.file_name() or view.name() or "untitled"
+    )
+
+
+def attach_preview(preview, view):
+    """Point `preview` at markdown view `view` and render it."""
+    preview.settings().set(PREVIEW_VIEW_INFO, {"id": view.id()})
+    preview.set_name(preview_name(view))
+    update_preview(view)
+    start_scroll_sync(view)
+
+
+def follow(view):
+    """Point a preview in another pane of the window at markdown view `view`.
+
+    Picks a preview showing a file from `view`'s pane (or a detached one); if
+    the window has exactly one preview, that one."""
+    window = view.window()
+    if window is None or any(find_previews(view)):
+        return
+    group = group_of(view)
+    previews = [
+        other
+        for other in window.views()
+        if is_preview(other) and window.get_view_index(other)[0] != group
+    ]
+    if not previews:
+        return
+    candidates = [
+        preview
+        for preview in previews
+        if preview_target(preview) is None or group_of(preview_target(preview)) == group
+    ]
+    if not candidates and len(previews) == 1:
+        candidates = previews
+    if candidates:
+        attach_preview(candidates[0], view)
+
+
+def reattach_after_close(window, group, previews):
+    """After the file previews were showing is closed: show the file now
+    active in its pane, or another markdown file, or close the previews."""
+    previews = [preview for preview in previews if preview.window() is not None]
+    if not previews:
+        return
+    active = window.active_view_in_group(group)
+    choices = [active] if active is not None else []
+    choices += window.views_in_group(group) + window.views()
+    for view in choices:
+        if is_markdown(view) and not is_preview(view):
+            for preview in previews:
+                attach_preview(preview, view)
+            return
+    for preview in previews:
+        MarkdownLivePreviewListener.phantom_sets.pop(preview.id(), None)
+        preview.close()
 
 
 def scroll_fraction(view):
@@ -124,15 +202,42 @@ class MarkdownLivePreviewListener(sublime_plugin.EventListener):
     pending = {}  # {markdown_view.id(): number of scheduled updates}
 
     def on_pre_close(self, view):
-        """Closing a markdown file closes its previews."""
+        """Closing a markdown file moves its previews to the next markdown file
+        (with follow_active_file), or closes them."""
         if is_preview(view):
             self.phantom_sets.pop(view.id(), None)
         elif is_markdown(view):
             self.pending.pop(view.id(), None)
             stop_scroll_sync(view.id())
-            for preview in list(find_previews(view)):
-                self.phantom_sets.pop(preview.id(), None)
-                preview.close()
+            previews = list(find_previews(view))
+            if not previews:
+                return
+            window = view.window()
+            if FOLLOW_ACTIVE_FILE and window is not None:
+                for preview in previews:
+                    preview.settings().set(PREVIEW_VIEW_INFO, {"id": None})
+                # once the view is gone and Sublime has activated the next tab
+                sublime.set_timeout(
+                    partial(reattach_after_close, window, group_of(view), previews), 0
+                )
+            else:
+                for preview in previews:
+                    self.phantom_sets.pop(preview.id(), None)
+                    preview.close()
+
+    def on_activated_async(self, view):
+        if FOLLOW_ACTIVE_FILE and is_markdown(view) and not is_preview(view):
+            follow(view)
+
+    def on_load_async(self, view):
+        """A file opened while a preview follows may only become markdown (get
+        its syntax) once loaded."""
+        if not is_markdown(view) or is_preview(view):
+            return
+        if any(find_previews(view)):
+            update_preview(view)
+        elif FOLLOW_ACTIVE_FILE and view.window() and view.window().active_view() == view:
+            follow(view)
 
     def on_modified_async(self, view):
         """Debounce: render DELAY ms after the last modification."""
@@ -274,8 +379,7 @@ class OpenMarkdownPreviewCommand(sublime_plugin.TextCommand):
         window.focus_group(group)
         preview = window.new_file()
         preview.set_scratch(True)
-        preview.set_name("Preview: " + os.path.basename(
-            markdown_view.file_name() or markdown_view.name() or "untitled"))
+        preview.set_name(preview_name(markdown_view))
         settings = preview.settings()
         settings.set(PREVIEW_VIEW_INFO, {"id": markdown_view.id()})
         for key, value in (
@@ -302,10 +406,11 @@ def parse_image_resource(text):
 
 
 def load_settings():
-    global DELAY, SYNC_SCROLL
+    global DELAY, SYNC_SCROLL, FOLLOW_ACTIVE_FILE
     settings = sublime.load_settings("MarkdownLivePreview.sublime-settings")
     DELAY = settings.get("delay_between_updates", 100)
     SYNC_SCROLL = settings.get("sync_scroll", True)
+    FOLLOW_ACTIVE_FILE = settings.get("follow_active_file", True)
 
 
 def plugin_loaded():

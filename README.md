@@ -20,6 +20,11 @@ A simple plugin to preview your markdown as you type right in Sublime Text.
   long cells wrap inside their column, column alignment (`:--`, `:-:`, `--:`) is
   respected, and links, bold and `code` keep their formatting. Tables reflow
   when you resize the preview.
+- **The preview follows the file you're looking at.** Switch to another
+  markdown tab and the preview shows that file; close the previewed file and it
+  moves on to the next markdown file (and closes when none are left). Tabs that
+  aren't markdown, and files opened in the preview's own pane, leave it alone.
+  Turn it off with `"follow_active_file": false`.
 - **The preview scrolls along with your markdown file.** Scroll the markdown and
   the preview follows to the same relative position. You can still scroll the
   preview on its own; it catches up the next time the markdown scrolls. Turn it

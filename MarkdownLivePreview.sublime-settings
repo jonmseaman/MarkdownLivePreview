@@ -3,5 +3,9 @@
 	"delay_between_updates": 100,
 
 	// scroll the preview along with the markdown file
-	"sync_scroll": true
+	"sync_scroll": true,
+
+	// when you switch to another markdown file, show it in the preview; when you
+	// close the previewed file, show the next markdown file instead
+	"follow_active_file": true
 }
